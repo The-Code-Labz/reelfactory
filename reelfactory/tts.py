@@ -3,8 +3,16 @@
 import hashlib
 import os
 import subprocess
+import uuid
 
 from .manifest import ManifestError
+
+
+def _tmp_path(path):
+    # ffmpeg infers the muxer from the extension, so keep it (e.g. foo.mp3
+    # -> foo.<rand>.tmp.mp3) rather than appending ".tmp" after it.
+    root, ext = os.path.splitext(path)
+    return f"{root}.{uuid.uuid4().hex[:8]}.tmp{ext}"
 
 
 def tts_cache_key(seg, voice_cfg):
@@ -62,17 +70,25 @@ def _silence(seg, path):
     except (TypeError, ValueError):
         dur = 3.0
     dur = max(0.5, min(dur, 600.0))
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
-         "-t", f"{dur:.2f}", "-c:a", "libmp3lame", path],
-        capture_output=True, check=True,
-    )
+    tmp = _tmp_path(path)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+             "-t", f"{dur:.2f}", "-c:a", "libmp3lame", tmp],
+            capture_output=True, check=True,
+        )
+        os.replace(tmp, path)
+    finally:
+        if os.path.isfile(tmp):
+            os.remove(tmp)
     return path
 
 
 def _edge(text, voice_cfg, path):
     import asyncio
     import edge_tts
+
+    tmp = _tmp_path(path)
 
     async def _gen():
         comm = edge_tts.Communicate(
@@ -81,11 +97,16 @@ def _edge(text, voice_cfg, path):
             rate=voice_cfg.get("rate", "+0%"),
             pitch=voice_cfg.get("pitch", "+0Hz"),
         )
-        await comm.save(path)
+        await comm.save(tmp)
 
-    asyncio.run(_gen())
-    if not os.path.isfile(path) or os.path.getsize(path) == 0:
-        raise RuntimeError("edge-tts produced no audio")
+    try:
+        asyncio.run(_gen())
+        if not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
+            raise RuntimeError("edge-tts produced no audio")
+        os.replace(tmp, path)
+    finally:
+        if os.path.isfile(tmp):
+            os.remove(tmp)
     return path
 
 
@@ -107,9 +128,15 @@ def _custom(text, voice_cfg, path):
         }).encode(),
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        with open(path, "wb") as f:
-            f.write(resp.read())
-    if os.path.getsize(path) == 0:
-        raise RuntimeError("custom TTS returned empty audio")
+    tmp = _tmp_path(path)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            with open(tmp, "wb") as f:
+                f.write(resp.read())
+        if os.path.getsize(tmp) == 0:
+            raise RuntimeError("custom TTS returned empty audio")
+        os.replace(tmp, path)
+    finally:
+        if os.path.isfile(tmp):
+            os.remove(tmp)
     return path

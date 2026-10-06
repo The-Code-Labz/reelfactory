@@ -5,6 +5,14 @@ import os
 import subprocess
 import urllib.parse
 import urllib.request
+import uuid
+
+
+def _tmp_path(path):
+    # ffmpeg infers the muxer from the extension, so keep it (e.g. foo.jpg
+    # -> foo.<rand>.tmp.jpg) rather than appending ".tmp" after it.
+    root, ext = os.path.splitext(path)
+    return f"{root}.{uuid.uuid4().hex[:8]}.tmp{ext}"
 
 
 def image_cache_key(seg, img_cfg):
@@ -57,8 +65,14 @@ def _pollinations(prompt, img_cfg, w, h, path):
         data = resp.read()
     if len(data) < 1000:
         raise RuntimeError("pollinations returned an empty/invalid image")
-    with open(path, "wb") as f:
-        f.write(data)
+    tmp = _tmp_path(path)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    finally:
+        if os.path.isfile(tmp):
+            os.remove(tmp)
 
 
 _ESCAPES = {"\\": "\\\\", ":": "\\:", "'": "\\'", "%": "\\%", "[": "\\[", "]": "\\]",
@@ -83,7 +97,13 @@ def _title_card(text, w, h, path):
         f"fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:"
         f"text='{line}',format=yuvj420p"
     )
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "lavfi", "-i", vf, "-frames:v", "1", path],
-        capture_output=True, check=True,
-    )
+    tmp = _tmp_path(path)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", vf, "-frames:v", "1", tmp],
+            capture_output=True, check=True,
+        )
+        os.replace(tmp, path)
+    finally:
+        if os.path.isfile(tmp):
+            os.remove(tmp)

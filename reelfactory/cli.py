@@ -37,8 +37,9 @@ def main(argv=None):
     p_dae = sub.add_parser("daemon", help="watch manifest and re-run on change")
     p_dae.add_argument("manifest")
 
-    p_res = sub.add_parser("resume", help="resume/inspect last job state")
+    p_res = sub.add_parser("resume", help="resume a job, skipping already-completed tracks")
     p_res.add_argument("manifest")
+    p_res.add_argument("--workers", type=int, default=None)
 
     p_st = sub.add_parser("status", help="print job state and report")
     p_st.add_argument("manifest")
@@ -77,10 +78,10 @@ def main(argv=None):
 
     if args.cmd == "resume":
         state = _read_json(state_p)
-        if not state or state.get("status") != "running":
-            print("no interrupted run to resume; running fresh")
+        if not state or state.get("status") not in ("running", "done"):
+            print("no prior job state found; running fresh")
         from .pipeline import run_pipeline
-        run_pipeline(job, max_workers=args.workers if hasattr(args, "workers") else None)
+        run_pipeline(job, max_workers=args.workers, resume=True)
         return 0
 
     if args.cmd == "run":
