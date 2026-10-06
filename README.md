@@ -35,11 +35,14 @@ pip install -e .            # or just run: python -m reelfactory --help
 python -m reelfactory validate examples/jobs.example.json
 python -m reelfactory run    examples/jobs.example.json
 python -m reelfactory daemon examples/jobs.example.json   # watch + auto re-run
+python -m reelfactory resume examples/jobs.example.json   # re-run, skipping cached work
 python -m reelfactory status examples/jobs.example.json
 python -m reelfactory --version
 ```
 
 Outputs land in `output/final_<job_id>_<track>.mp4` plus `output/.reelfactory/{state.json,report.json}`.
+
+`resume` does not restore from a checkpoint and continue mid-pipeline — it simply re-runs the pipeline from the top. Any progress it appears to "resume" comes entirely from the content-hash caching described above: segments whose audio/image/render already exist on disk under `.reelfactory/` are skipped, everything else is redone. If the cache has been cleared or the output dir moved, `resume` behaves exactly like `run`.
 
 ## Manifest schema
 
@@ -80,9 +83,13 @@ pyinstaller --onefile --name reelfactory -m reelfactory
 # embed the git SHA: rebuild with --version-file or patch reelfactory/__init__.py
 ```
 
-## GitHub Actions binaries
+There is no CI/CD pipeline in this repository — no `.github/workflows/` directory exists yet. Binaries are built and released manually with the command above.
 
-`.github/workflows/release.yml` builds Linux/macOS/Windows binaries with PyInstaller on every tag and attaches them to the release.
+## Status server (`serve.py`)
+
+`python -m reelfactory.serve` starts a minimal read-only HTTP status/dashboard server (`GET /`, `/report`, `/videos`, `/video/<name>`) for a job directory, configurable via the `PORT` and `REELFACTORY_DIR` env vars.
+
+It has **no authentication** and binds to all interfaces (`0.0.0.0`) by default, so it is reachable from anywhere on the network it's running on, not just `localhost`. Only run it on a trusted network, bind it behind a firewall/reverse proxy, or tunnel it — never expose it directly to the public internet.
 
 ## License
 
