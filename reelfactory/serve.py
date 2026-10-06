@@ -14,6 +14,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", "4050"))
 JOB_DIR = os.environ.get("REELFACTORY_DIR", ".")
+# Default to loopback-only: this server ships with no TLS and no rate
+# limiting. Set REELFACTORY_HOST=0.0.0.0 explicitly to expose it, and set
+# REELFACTORY_TOKEN to require a bearer token on every request when you do.
+HOST = os.environ.get("REELFACTORY_HOST", "127.0.0.1")
+AUTH_TOKEN = os.environ.get("REELFACTORY_TOKEN")
 
 
 def _rf(*parts):
@@ -42,7 +47,15 @@ class Handler(BaseHTTPRequestHandler):
     def _not_found(self):
         self._json({"error": "not found"}, 404)
 
+    def _authorized(self):
+        if not AUTH_TOKEN:
+            return True
+        got = self.headers.get("Authorization", "")
+        return got == f"Bearer {AUTH_TOKEN}"
+
     def do_GET(self):
+        if not self._authorized():
+            return self._json({"error": "unauthorized"}, 401)
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path == "/":
             state = _read_json(_rf("output", ".reelfactory", "state.json"))
@@ -96,8 +109,11 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     os.makedirs(_rf("output"), exist_ok=True)
-    srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"reelfactory status server on http://0.0.0.0:{PORT} (dir={os.path.abspath(JOB_DIR)})")
+    if HOST not in ("127.0.0.1", "localhost") and not AUTH_TOKEN:
+        print("WARNING: REELFACTORY_HOST is non-local and REELFACTORY_TOKEN is unset; "
+              "this server has no authentication. Set REELFACTORY_TOKEN.", file=sys.stderr)
+    srv = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"reelfactory status server on http://{HOST}:{PORT} (dir={os.path.abspath(JOB_DIR)})")
     srv.serve_forever()
 
 

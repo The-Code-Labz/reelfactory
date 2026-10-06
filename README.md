@@ -35,11 +35,14 @@ pip install -e .            # or just run: python -m reelfactory --help
 python -m reelfactory validate examples/jobs.example.json
 python -m reelfactory run    examples/jobs.example.json
 python -m reelfactory daemon examples/jobs.example.json   # watch + auto re-run
+python -m reelfactory resume examples/jobs.example.json   # skip completed tracks, rebuild the rest
 python -m reelfactory status examples/jobs.example.json
 python -m reelfactory --version
 ```
 
 Outputs land in `output/final_<job_id>_<track>.mp4` plus `output/.reelfactory/{state.json,report.json}`.
+
+`resume` checks `output/.reelfactory/state.json`: any track already marked `done` there whose output file still exists on disk is skipped entirely, and only the remaining tracks are rebuilt (segment work for them still benefits from the content-hash caches described above). This is track-granularity resume, not segment-granularity — a track that was mid-way through when the run was interrupted is not partially reused; it is rebuilt from its first segment (again leaning on the content-hash caches for any segment whose cached output survived). If `state.json` is missing, or the output dir has moved, `resume` behaves like `run`.
 
 ## Manifest schema
 
@@ -80,9 +83,13 @@ pyinstaller --onefile --name reelfactory -m reelfactory
 # embed the git SHA: rebuild with --version-file or patch reelfactory/__init__.py
 ```
 
-## GitHub Actions binaries
+There is no CI/CD pipeline in this repository — no `.github/workflows/` directory exists yet. Binaries are built and released manually with the command above.
 
-`.github/workflows/release.yml` builds Linux/macOS/Windows binaries with PyInstaller on every tag and attaches them to the release.
+## Status server (`serve.py`)
+
+`python -m reelfactory.serve` starts a minimal read-only HTTP status/dashboard server (`GET /`, `/report`, `/videos`, `/video/<name>`) for a job directory, configurable via the `PORT` and `REELFACTORY_DIR` env vars.
+
+It binds to `127.0.0.1` by default, so it is reachable only from the local machine. Set `REELFACTORY_HOST` to bind elsewhere (e.g. `0.0.0.0`) and `REELFACTORY_TOKEN` to require a `Bearer <token>` `Authorization` header on every request — if you set a non-local `REELFACTORY_HOST` without `REELFACTORY_TOKEN`, the server still starts but prints a warning to stderr, since it ships with no TLS and no rate limiting. Even with a token set, only run it on a trusted network or behind a firewall/reverse proxy — never expose it directly to the public internet.
 
 ## License
 

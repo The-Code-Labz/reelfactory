@@ -138,10 +138,11 @@ def validate_manifest(job):
         errs.append("image.provider: unsupported")
     if job["voice"]["provider"] != "none" and not job["voice"].get("voice"):
         errs.append("voice.voice: required when provider is not 'none'")
-    for key in ("api_key", "base_url", "webhook_url", "webhook_secret"):
-        val = job.get(key)
+    for section, key in (("voice", "api_key"), ("voice", "base_url"),
+                          ("publish", "webhook_url"), ("publish", "webhook_secret")):
+        val = job.get(section, {}).get(key)
         if val is not None and not isinstance(val, str):
-            errs.append(f"{key}: must be a string")
+            errs.append(f"{section}.{key}: must be a string")
 
     if errs:
         raise ManifestError("manifest validation failed:\n  - " + "\n  - ".join(errs))

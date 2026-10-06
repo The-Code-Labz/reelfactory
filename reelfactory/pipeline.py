@@ -59,9 +59,36 @@ def _save_state(rf, state):
     os.replace(tmp, os.path.join(rf, "state.json"))
 
 
-def run_pipeline(job, log=print, max_workers=None):
+def _load_report(rf):
+    p = os.path.join(rf, "report.json")
+    if os.path.isfile(p):
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return None
+
+
+def run_pipeline(job, log=print, max_workers=None, resume=False):
     rf = _dirs(job)
     state = _load_state(rf)
+
+    # Tracks already completed on a prior run: skip them entirely when
+    # resuming, instead of redoing every segment and relying on caches.
+    skip_tracks = set()
+    carried_entries = {}
+    if resume:
+        prev_report = _load_report(rf)
+        prev_entries = {e["track"]: e for e in (prev_report or {}).get("tracks", [])}
+        for name, tstate in (state.get("tracks") or {}).items():
+            out = tstate.get("output")
+            if tstate.get("status") == "done" and out and os.path.isfile(out):
+                skip_tracks.add(name)
+                if name in prev_entries:
+                    carried_entries[name] = prev_entries[name]
+                log(f"resume: track '{name}' already complete -> {out}, skipping")
+
     state["status"] = "running"
     _save_state(rf, state)
 
@@ -85,14 +112,16 @@ def run_pipeline(job, log=print, max_workers=None):
             log, f"{tag} render")
         return ti, si, out
 
-    total = sum(len(t.get("segments", [])) for t in job["tracks"])
+    pending_tracks = [(ti, t) for ti, t in enumerate(job["tracks"]) if t["name"] not in skip_tracks]
+    total = sum(len(t.get("segments", [])) for _, t in pending_tracks)
     done = 0
     workers = max_workers or min(4, max(1, (os.cpu_count() or 2)))
-    log(f"job {job['job_id']}: {total} segments across {len(job['tracks'])} track(s), {workers} workers")
+    log(f"job {job['job_id']}: {total} segments across {len(pending_tracks)} track(s) "
+        f"({len(skip_tracks)} skipped), {workers} workers")
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = []
-        for ti, track in enumerate(job["tracks"]):
+        for ti, track in pending_tracks:
             for si, seg in enumerate(track["segments"]):
                 futs.append(ex.submit(work, ti, si, track, seg))
         for fut in as_completed(futs):
@@ -101,7 +130,10 @@ def run_pipeline(job, log=print, max_workers=None):
             done += 1
             log(f"segment {done}/{total} done (t{ti}s{si})")
 
-    for ti, track in enumerate(job["tracks"]):
+    for name in skip_tracks:
+        report["tracks"].append(carried_entries.get(name, {"track": name, "skipped": True}))
+
+    for ti, track in pending_tracks:
         segs = track["segments"]
         paths = [results[(ti, si)] for si in range(len(segs))]
         final = os.path.join(job["output_dir"], f"final_{job['job_id']}_{track['name']}.mp4")
